@@ -1,107 +1,190 @@
 import { Link } from 'react-router-dom'
+import {
+  ArrowRight, BarChart3, CheckCircle2, FileText, Printer, QrCode, ShieldCheck, Smartphone, Wallet,
+} from 'lucide-react'
 import { getAccessToken } from '../lib/api'
+
+const features = [
+  {
+    icon: QrCode,
+    title: 'One QR per shop',
+    body: 'A unique, downloadable code sends every customer to your shop page. No app, no account.',
+  },
+  {
+    icon: FileText,
+    title: 'Real page pricing',
+    body: 'PDF, Word and image uploads are converted server-side, then priced by their actual page count.',
+  },
+  {
+    icon: Printer,
+    title: 'Agent printing',
+    body: 'A small desktop agent prints approved files silently and reports each result back to the shop.',
+  },
+  {
+    icon: Wallet,
+    title: 'Shop-controlled payments',
+    body: 'Set per-page rates, duplex pricing, cash or mobile wallets, and enabled print options.',
+  },
+  {
+    icon: BarChart3,
+    title: 'Live queue and reports',
+    body: 'Follow every request from payment review to pickup, reorder jobs and review daily sales.',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Private by default',
+    body: 'Documents stay in private storage and are deleted automatically after the retention period.',
+  },
+]
 
 export default function LandingPage() {
   const signedIn = Boolean(getAccessToken())
   return (
     <div className="shell">
       <header className="topbar">
-        <Link to="/" className="brand">
-          <span className="brand-mark">S</span>
-          <span>
-            <b>SmartPrint</b>
-            <small>Scan · Upload · Print</small>
-          </span>
-        </Link>
-        <nav>
-          <a className="nav" href="#how">How it works</a>
-          <Link className="nav" to="/admin/login">Admin login</Link>
-          <Link className="nav active" to={signedIn ? '/admin' : '/admin/register'}>
-            {signedIn ? 'Dashboard' : 'Register shop'}
+        <div className="topbar-inner">
+          <Link to="/" className="brand">
+            <span className="brand-mark">S</span>
+            <span className="brand-text">
+              <b>SmartPrint</b>
+              <small>Scan · Upload · Print</small>
+            </span>
           </Link>
-        </nav>
+          <nav className="topnav" aria-label="Main">
+            <a className="nav" href="#how">How it works</a>
+            <a className="nav" href="#features">Features</a>
+            <Link className="nav nav-login" to="/admin/login">Admin login</Link>
+            <Link className="btn primary small" to={signedIn ? '/admin' : '/admin/register'}>
+              {signedIn ? 'Dashboard' : 'Register shop'}
+            </Link>
+          </nav>
+        </div>
       </header>
 
       <main className="landing">
         <section className="landing-hero">
-          <div>
-            <span className="eyebrow">Self-service printing</span>
+          <div className="landing-copy-col">
+            <span className="eyebrow"><span className="eyebrow-dot" />Self-service printing for local shops</span>
             <h1 className="landing-title">Skip the queue.<br /><em>Print in minutes.</em></h1>
             <p className="landing-copy">
-              Customers scan a shop's QR code, upload their documents, choose print settings,
-              pay, and collect. The shop's print agent does the rest — one job at a time,
-              in payment order.
+              Customers scan your QR code, upload documents, check a realistic page preview and pay.
+              Your print agent takes it from there — one approved job at a time, in payment order.
             </p>
             <div className="landing-actions">
               <Link className="btn primary lg" to={signedIn ? '/admin' : '/admin/register'}>
                 {signedIn ? 'Open admin panel' : 'Register your print shop'}
+                <ArrowRight size={16} />
               </Link>
               <Link className="btn lg" to="/admin/login">I already have an account</Link>
             </div>
+            <ul className="landing-trust">
+              <li><CheckCircle2 size={15} /> No app install</li>
+              <li><CheckCircle2 size={15} /> Pay by wallet or cash</li>
+              <li><CheckCircle2 size={15} /> Live order status</li>
+            </ul>
           </div>
 
-          <div className="landing-grid">
-            <div className="landing-card">
-              <div className="landing-card-icon">▣</div>
-              <h3>One QR per shop</h3>
-              <p>A unique, downloadable QR code routes every visitor to that shop's upload page.</p>
-            </div>
-            <div className="landing-card">
-              <div className="landing-card-icon">⌁</div>
-              <h3>Live status</h3>
-              <p>Customers watch payment approval, queue position, printing and pickup in real time.</p>
-            </div>
-            <div className="landing-card">
-              <div className="landing-card-icon">⌘</div>
-              <h3>Agent printing</h3>
-              <p>A small desktop agent prints approved PDFs silently and reports success or failure.</p>
-            </div>
-            <div className="landing-card">
-              <div className="landing-card-icon">৳</div>
-              <h3>Shop-controlled pricing</h3>
-              <p>Owners set per-page rates, duplex surcharge, payment methods and enabled options.</p>
-            </div>
-            <div className="landing-card wide">
-              <div className="inline" style={{ justifyContent: 'space-between' }}>
-                <div>
-                  <h3>No app install for customers</h3>
-                  <p>PDF, Word and image files are converted server-side, priced by real page count, and purged after printing.</p>
+          <div className="landing-visual" aria-hidden="true">
+            <div className="visual-window">
+              <div className="visual-toolbar">
+                <span className="visual-dots"><i /><i /><i /></span>
+                <span className="visual-file"><FileText size={12} /> assignment.pdf</span>
+                <span className="visual-zoom">100%</span>
+              </div>
+              <div className="visual-stage">
+                <div className="visual-sheet">
+                  <span className="vs-line vs-title" />
+                  <span className="vs-line vs-sub" />
+                  <span className="vs-line" />
+                  <span className="vs-line w-90" />
+                  <span className="vs-line w-75" />
+                  <span className="vs-rule" />
+                  <span className="vs-line vs-sub" />
+                  <span className="vs-line w-85" />
+                  <span className="vs-line w-60" />
+                  <div className="vs-table">
+                    <span /><span /><span />
+                    <span /><span /><span />
+                    <span /><span /><span />
+                  </div>
+                  <span className="vs-page">Page 1 of 3</span>
                 </div>
-                <span className="badge completed">Privacy first</span>
+                <div className="visual-card">
+                  <span className="visual-card-icon"><CheckCircle2 size={15} /></span>
+                  <div>
+                    <b>Payment confirmed</b>
+                    <small>Queue #12 · Printing</small>
+                  </div>
+                </div>
               </div>
             </div>
+            <span className="visual-float"><Smartphone size={14} /> Scans from any phone</span>
           </div>
         </section>
 
         <section className="landing-steps" id="how">
-          <span className="eyebrow">How it works</span>
-          <div className="steps-row" style={{ marginTop: 14 }}>
-            <div className="step-item">
-              <i>1</i>
-              <b>Scan the shop QR</b>
-              <span>Your shop page opens in any mobile or desktop browser.</span>
+          <div className="section-head">
+            <div>
+              <span className="eyebrow">How it works</span>
+              <h2>From QR scan to printed pages</h2>
             </div>
-            <div className="step-item">
-              <i>2</i>
-              <b>Upload & configure</b>
-              <span>Add files, choose colour, sides, pages, orientation and copies.</span>
+            <p>A straightforward flow for customers, with staff in control of every payment.</p>
+          </div>
+          <div className="steps-row">
+            {[
+              ['1', 'Scan the shop QR', 'The shop page opens in any mobile or desktop browser.'],
+              ['2', 'Upload & preview', 'Add files, choose color, sides, pages, orientation and copies.'],
+              ['3', 'Pay & submit', 'Send money by bKash, Nagad or Rocket, or pay cash at the counter.'],
+              ['4', 'Collect your prints', 'The shop confirms payment and your job joins the live print queue.'],
+            ].map(([number, title, body]) => <div className="step-item" key={number}>
+              <i>{number}</i>
+              <b>{title}</b>
+              <span>{body}</span>
+            </div>)}
+          </div>
+        </section>
+
+        <section className="landing-features" id="features">
+          <div className="section-head">
+            <div>
+              <span className="eyebrow">Built for print shops</span>
+              <h2>Everything the counter needs</h2>
             </div>
-            <div className="step-item">
-              <i>3</i>
-              <b>Pay & submit</b>
-              <span>Send money by bKash, Nagad or Rocket, or pay cash at the counter.</span>
-            </div>
-            <div className="step-item">
-              <i>4</i>
-              <b>Watch it print</b>
-              <span>After payment confirmation your job joins the live queue.</span>
-            </div>
+            <p>One workspace for requests, payments, queue, printers and daily reporting.</p>
+          </div>
+          <div className="feature-grid">
+            {features.map(({ icon: Icon, title, body }) => <article className="feature-card" key={title}>
+              <span className="feature-icon"><Icon size={18} /></span>
+              <h3>{title}</h3>
+              <p>{body}</p>
+            </article>)}
+          </div>
+        </section>
+
+        <section className="cta-band">
+          <div>
+            <span className="eyebrow">Ready in minutes</span>
+            <h2>Put your print shop on the QR</h2>
+            <p>Create your shop, set your prices, download the QR and start accepting orders today.</p>
+          </div>
+          <div className="cta-actions">
+            <Link className="btn light lg" to={signedIn ? '/admin' : '/admin/register'}>
+              {signedIn ? 'Open dashboard' : 'Create your shop'}
+            </Link>
+            <Link className="btn ghost-light lg" to="/admin/login">Sign in</Link>
           </div>
         </section>
       </main>
 
       <footer className="footer">
-        SmartPrint — multi-shop QR printing platform. <Link to="/admin/register">List your shop</Link>
+        <div className="footer-inner">
+          <span>© {new Date().getFullYear()} SmartPrint — multi-shop QR printing platform.</span>
+          <div className="footer-links">
+            <a href="#how">How it works</a>
+            <a href="#features">Features</a>
+            <Link to="/admin/register">List your shop</Link>
+          </div>
+        </div>
       </footer>
     </div>
   )

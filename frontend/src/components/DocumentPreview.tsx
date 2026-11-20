@@ -35,13 +35,26 @@ function downloadName(fileName: string, extension: string) {
   return `${base}.${extension}`
 }
 
+/** Keeps only the most recently viewed pages so long documents stay light. */
+function rememberPage(cache: Map<number, string>, index: number, url: string) {
+  cache.set(index, url)
+  if (cache.size <= 8) return
+  for (const [key, value] of cache) {
+    if (key === index) continue
+    URL.revokeObjectURL(value)
+    cache.delete(key)
+    if (cache.size <= 8) break
+  }
+}
+
 export default function DocumentPreview({
   fileName, pageCount, orientation = 'PORTRAIT', loadPage, pdfPath, cacheKey, className,
 }: DocumentPreviewProps) {
   const total = Math.max(1, pageCount || 1)
+  // Height as a multiple of the sheet width (A4 portrait is 794 × 1123 CSS px).
   const ratio = orientation === 'LANDSCAPE'
-    ? A4.height / A4.width
-    : A4.width / A4.height
+    ? A4.width / A4.height
+    : A4.height / A4.width
 
   const [page, setPage] = useState(0)
   const [zoom, setZoom] = useState(1)
@@ -91,7 +104,7 @@ export default function DocumentPreview({
       if (url) URL.revokeObjectURL(url)
       setPdfUrl('')
     }
-  }, [pdfPath])
+  }, [pdfPath, attempt])
 
   // Drop cached page images when the print settings or selected document change.
   useEffect(() => {
@@ -121,7 +134,7 @@ export default function DocumentPreview({
       .then(blob => {
         if (request !== generation.current) return
         const url = URL.createObjectURL(blob)
-        cache.current.set(page, url)
+        rememberPage(cache.current, page, url)
         setImageUrl(url)
       })
       .catch(() => {
@@ -245,19 +258,20 @@ export default function DocumentPreview({
     <div className="a4-stage" ref={stageRef} tabIndex={0}
       aria-label={`${fileName}, page ${page + 1} of ${total}`}>
       <div className="a4-canvas">
-        {!sourceUrl && !loading && !error && <div className="a4-placeholder">
+        {!pdfPath && !loadPage && <div className="a4-placeholder">
           <FileText size={26} />
           <span>Choose a document to see its print preview.</span>
         </div>}
-        {sourceUrl && <div className="a4-page" style={{ width: pageWidth, height: pageWidth * ratio }}>
+        {(pdfPath || loadPage) && <div className="a4-page"
+          style={{ width: pageWidth, height: pageWidth * ratio }}>
           {pdfUrl ? <iframe
             key={`${pdfUrl}-${page}`}
             src={`${pdfUrl}#page=${page + 1}&view=FitH&toolbar=0&navpanes=0&statusbar=0`}
             title={`${fileName} page ${page + 1}`} /> : imageUrl
             ? <img src={imageUrl} alt={`${fileName} page ${page + 1} preview`} draggable={false} />
-            : <span className="a4-sheet-loading"><span className="spinner" /></span>}
+            : null}
           {loading && <div className="a4-loading" role="status">
-            <span className="spinner" /><span>Rendering page…</span>
+            <span className="spinner" /><span>{pdfPath ? 'Loading document…' : 'Rendering page…'}</span>
           </div>}
           {error && <div className="a4-loading a4-error" role="alert">
             <span>{error}</span>
@@ -286,21 +300,51 @@ export function DocumentPreviewDialog({
   onClose: () => void
   children: ReactNode
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    const previous = document.body.style.overflow
+    const previousFocus = document.activeElement as HTMLElement | null
+    const node = dialogRef.current
+    const focusable = () => Array.from(node?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter(element => element.offsetParent !== null)
+    focusable()[0]?.focus()
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = previous
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previousOverflow
+      previousFocus?.focus?.()
     }
-  }, [onClose])
+  }, [])
 
   return <div className="preview-dialog-backdrop" onMouseDown={event => {
     if (event.target === event.currentTarget) onClose()
   }}>
-    <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="preview-dialog" role="dialog" aria-modal="true" aria-label={title} ref={dialogRef}>
       <header className="preview-dialog-head">
         <span className="preview-doc-icon"><FileText size={18} /></span>
         <div className="preview-dialog-title">

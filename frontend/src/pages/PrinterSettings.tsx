@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Printer } from 'lucide-react'
 import {
   createAgent, errorMessage, fetchPrinterDiscovery, savePrinterRouting,
   setPrinterEnabled, toApiError, type PrinterRouting,
@@ -174,7 +175,7 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
     </div>}
     <div className="workspace-grid">
     <section className="panel stack">
-      <h2>Printers</h2>
+      <h2>Discovered printers</h2>
       {failure && <p role="alert" className="alert error">{failure}</p>}
       {actionError && <p role="alert" className="alert error">{actionError}</p>}
       {feedback && <p role="status" className="alert info">{feedback}</p>}
@@ -200,7 +201,8 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
           await setPrinterEnabled(printer.id, !printer.enabled)
         })}>{printer.enabled ? 'Disable printer' : 'Enable printer'}</button>
       </div>)}
-      {snapshot && !failure && printers.length === 0 && <div className="alert info" role="status">
+      {snapshot && !failure && printers.length === 0 && <div className="empty-state" role="status">
+        <span className="empty-icon"><Printer size={20} /></span>
         <b>No printers discovered for this shop</b>
         <p>{agent?.discoveryError ?? (agent
           ? 'The agent is connected but reported no queues. Run it under the Windows user who sees the printers.'
@@ -239,7 +241,7 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
       </form>}
     </section>
     <section className="panel stack">
-      <h2>Print Agent</h2>
+      <h2>Print agent</h2>
       <p role="status"><b>{status}</b></p>
       {agent && <p><b>{agent.name}</b> · {agent.agentCode === localCode ? 'This device' : 'Active shop agent'}</p>}
       {agent?.discoveryError && <p role="alert" className="alert error">{agent.discoveryError}</p>}

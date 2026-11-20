@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertCircle, ArrowRight, CheckCircle2, Clock3, FileText, Loader2, Printer, ShieldCheck,
-  UploadCloud, Wallet, X,
+  AlertCircle, ArrowRight, Clock3, FileText, Loader2, Printer, ShieldCheck, UploadCloud, X,
 } from 'lucide-react'
 import {
   createOrder, customerEventsUrl, draftPreview, errorMessage, fetchOrder, fetchPublicShop,
@@ -88,9 +87,9 @@ export default function CustomerPage() {
         </div>
         <ol className="mini-steps" aria-label="How it works">
           <li><span>1</span>Upload</li>
-          <li><CheckCircle2 size={13} aria-hidden="true" /><span>2</span>Preview</li>
-          <li><Wallet size={13} aria-hidden="true" /><span>3</span>Pay</li>
-          <li><Printer size={13} aria-hidden="true" /><span>4</span>Collect</li>
+          <li><span>2</span>Preview</li>
+          <li><span>3</span>Pay</li>
+          <li><span>4</span>Collect</li>
         </ol>
       </div>
 
@@ -198,7 +197,7 @@ function PrintForm({ shop }: { shop: PublicShop }) {
 
   const cacheKey = `${currentFile?.name ?? ''}:${fileIndex}:${settings.colorMode}:${settings.orientation}:${settings.pageSelection}`
 
-  return <form onSubmit={submit} className="checkout-grid" noValidate={false}>
+  return <form onSubmit={submit} className="checkout-grid">
     <div className="checkout-main">
       <fieldset className="panel" disabled={submitting}>
         <div className="panel-head">
@@ -475,6 +474,12 @@ export function OrderStatusPage() {
   const [refreshError, setRefreshError] = useState('')
   const [previewFile, setPreviewFile] = useState<PublicOrder['files'][number]>()
   const [attempt, setAttempt] = useState(0)
+  const hasOrder = useRef(false)
+
+  useEffect(() => {
+    hasOrder.current = false
+    setOrder(undefined)
+  }, [publicToken])
 
   useEffect(() => {
     let active = true
@@ -484,12 +489,11 @@ export function OrderStatusPage() {
       loading = true
       try {
         const value = await fetchOrder(publicToken)
-        if (active) { setOrder(value); setError(''); setRefreshError('') }
+        if (active) { hasOrder.current = true; setOrder(value); setError(''); setRefreshError('') }
       } catch (cause) {
-        if (active) {
-          if (order) setRefreshError(errorMessage(cause))
-          else setError(errorMessage(cause))
-        }
+        if (!active) return
+        if (hasOrder.current) setRefreshError(errorMessage(cause))
+        else setError(errorMessage(cause))
       } finally {
         loading = false
       }
@@ -500,8 +504,6 @@ export function OrderStatusPage() {
     events.addEventListener('update', refresh)
     const timer = window.setInterval(refresh, 5000)
     return () => { active = false; events.close(); window.clearInterval(timer) }
-    // `order` is intentionally not a dependency: the poller must not be recreated on each update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicToken, attempt])
 
   async function save(event: FormEvent) {
@@ -633,7 +635,9 @@ export function OrderStatusPage() {
                 <span className="file-icon" aria-hidden="true">{extension(file.name)}</span>
                 <div className="file-info">
                   <b title={file.name}>{file.name}</b>
-                  <small>{file.selectedPages} pages × {file.copies} · {file.colorMode === 'COLOR' ? 'Color' : 'B&W'}
+                  <small>{file.selectedPages} {file.selectedPages === 1 ? 'page' : 'pages'}
+                    {' × '}{file.copies} {file.copies === 1 ? 'copy' : 'copies'}
+                    {' · '}{file.colorMode === 'COLOR' ? 'Color' : 'B&W'}
                     {' · '}{file.sideMode === 'DUPLEX' ? 'Double-sided' : 'Single-sided'}</small>
                 </div>
                 {file.previewUrl && <button type="button" className="btn tiny" onClick={() => setPreviewFile(file)}>
