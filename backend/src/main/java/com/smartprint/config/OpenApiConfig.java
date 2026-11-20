@@ -1,0 +1,32 @@
+package com.smartprint.config;
+
+import io.swagger.v3.oas.models.Components;
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.info.License;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class OpenApiConfig {
+
+    @Bean
+    OpenAPI smartPrintOpenApi() {
+        final String scheme = "bearerAuth";
+        return new OpenAPI()
+            .info(new Info()
+                .title("SmartPrint API")
+                .description("QR-based print shop management API. All endpoints are versioned under /api/v1.")
+                .version("v1")
+                .license(new License().name("Proprietary")))
+            .addSecurityItem(new SecurityRequirement().addList(scheme))
+            .components(new Components().addSecuritySchemes(scheme,
+                new SecurityScheme()
+                    .name(scheme)
+                    .type(SecurityScheme.Type.HTTP)
+                    .scheme("bearer")
+                    .bearerFormat("JWT")));
+    }
+}

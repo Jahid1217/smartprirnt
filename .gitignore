@@ -1,0 +1,30 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local development database (scripts/dev-db.sh)
+.local/
+
+# Java
+backend/target/
+*.class
+*.log
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python
+print-agent/.venv/
+__pycache__/
+*.pyc
+
+# Editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store

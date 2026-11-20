@@ -1,0 +1,101 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: smartprint-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/smartprint_db}
+    username: ${DB_USER:smartprint}
+    password: ${DB_PASSWORD:change_me_local}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 10000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:20MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:100MB}
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: ${HEALTH_SHOW_DETAILS:always}
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,storage
+          show-details: always
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  info:
+    env:
+      enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+  packages-to-scan: com.smartprint
+
+info:
+  app:
+    name: SmartPrint
+    version: 0.1.0
+
+smartprint:
+  public-base-url: ${PUBLIC_BASE_URL:http://localhost:5173}
+  auth:
+    jwt-secret: ${JWT_SECRET:}
+    token-ttl-hours: ${JWT_TTL_HOURS:12}
+  documents:
+    libreoffice-path: ${LIBREOFFICE_PATH:soffice}
+    conversion-timeout-seconds: ${DOCUMENT_CONVERSION_TIMEOUT_SECONDS:120}
+  realtime:
+    heartbeat-ms: ${SSE_HEARTBEAT_MS:20000}
+  retention:
+    scan-ms: ${RETENTION_SCAN_MS:600000}
+    initial-delay-ms: ${RETENTION_INITIAL_DELAY_MS:60000}
+  pricing:
+    bw-per-page: ${PRICE_BW_PER_PAGE:2.00}
+    color-per-page: ${PRICE_COLOR_PER_PAGE:10.00}
+  payments:
+    bkash-number: ${BKASH_NUMBER:}
+    nagad-number: ${NAGAD_NUMBER:}
+  upload:
+    max-file-size-bytes: ${UPLOAD_MAX_FILE_SIZE_BYTES:20971520}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  storage:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:smartprint}
+    secret-key: ${MINIO_SECRET_KEY:change_me_minio}
+    bucket: ${MINIO_BUCKET:smartprint-documents}
+    secure: ${MINIO_SECURE:false}
+    presigned-url-minutes: ${MINIO_PRESIGNED_URL_MINUTES:15}

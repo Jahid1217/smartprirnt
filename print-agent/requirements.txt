@@ -1,0 +1,6 @@
+requests>=2.32,<3
+python-dotenv>=1.0,<2
+pycups>=2.0; platform_system == "Linux"
+pywin32>=306; platform_system == "Windows"
+pypdfium2>=4.30,<6; platform_system == "Windows"
+Pillow>=10; platform_system == "Windows"

@@ -1,0 +1,2 @@
+ALTER TABLE printers ADD COLUMN agent_default BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE print_agents ADD COLUMN discovery_error VARCHAR(200);

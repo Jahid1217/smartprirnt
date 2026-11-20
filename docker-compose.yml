@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: smartprint-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smartprint_db}
+      POSTGRES_USER: ${POSTGRES_USER:-smartprint}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - smartprint_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartprint} -d ${POSTGRES_DB:-smartprint_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # MinIO withdrew its official Docker Hub images. This pinned community mirror is
+  # used for local development only; set MINIO_IMAGE to your own licensed/private
+  # registry image for shared or production environments.
+  minio:
+    image: ${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-08-04T00-00-00Z}
+    container_name: smartprint-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smartprint}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_minio}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - smartprint_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # No bucket-initializer container is needed: the backend creates the private bucket
+  # at startup (ObjectStorageService#ensureBucket), and MinIO buckets are private by
+  # default. This also avoids depending on the withdrawn minio/mc image.
+
+  backend:
+    build:
+      context: ./backend
+    container_name: smartprint-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-smartprint_db}
+      DB_USER: ${POSTGRES_USER:-smartprint}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-smartprint}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change_me_minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-smartprint-documents}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8081}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting Compose}
+      SHOP_CODE: ${SHOP_CODE:-SHOP001}
+      PRICE_BW_PER_PAGE: ${PRICE_BW_PER_PAGE:-2.00}
+      PRICE_COLOR_PER_PAGE: ${PRICE_COLOR_PER_PAGE:-10.00}
+      BKASH_NUMBER: ${BKASH_NUMBER:-}
+      NAGAD_NUMBER: ${NAGAD_NUMBER:-}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+    container_name: smartprint-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+
+volumes:
+  smartprint_pgdata:
+  smartprint_minio_data:
