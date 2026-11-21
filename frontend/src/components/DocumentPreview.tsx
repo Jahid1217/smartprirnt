@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Maximize2, Printer,
+  ChevronLeft, ChevronRight, ExternalLink, FileText, Maximize2,
   StretchHorizontal, X, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import { fetchAssetBlob } from '../lib/api'
@@ -30,11 +30,6 @@ function clampZoom(value: number) {
   return Math.min(3, Math.max(0.35, Math.round(value * 100) / 100))
 }
 
-function downloadName(fileName: string, extension: string) {
-  const base = fileName.replace(/\.[^.]+$/, '').trim() || 'document'
-  return `${base}.${extension}`
-}
-
 /** Keeps only the most recently viewed pages so long documents stay light. */
 function rememberPage(cache: Map<number, string>, index: number, url: string) {
   cache.set(index, url)
@@ -47,7 +42,7 @@ function rememberPage(cache: Map<number, string>, index: number, url: string) {
   }
 }
 
-export default function DocumentPreview({
+function DocumentPreview({
   fileName, pageCount, orientation = 'PORTRAIT', loadPage, pdfPath, cacheKey, className,
 }: DocumentPreviewProps) {
   const total = Math.max(1, pageCount || 1)
@@ -162,7 +157,6 @@ export default function DocumentPreview({
     : Math.min(fitWidth * zoom, fitWidth * 3)
   const zoomPercent = Math.round((pageWidth / fitWidth) * 100)
   const sourceUrl = pdfUrl || imageUrl
-  const canPrint = Boolean(sourceUrl)
 
   function goTo(next: number) {
     setPage(Math.min(total - 1, Math.max(0, next)))
@@ -171,48 +165,6 @@ export default function DocumentPreview({
   function zoomBy(delta: number) {
     setFit('width')
     setZoom(clampZoom(pageWidth / fitWidth + delta))
-  }
-
-  function download() {
-    if (!sourceUrl) return
-    const link = document.createElement('a')
-    link.href = sourceUrl
-    link.download = downloadName(fileName, pdfUrl ? 'pdf' : 'jpg')
-    link.click()
-  }
-
-  function print() {
-    if (pdfUrl) {
-      const frame = document.createElement('iframe')
-      frame.setAttribute('title', 'Print preview')
-      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0'
-      frame.src = pdfUrl
-      let printed = false
-      frame.onload = () => {
-        if (printed) return
-        printed = true
-        window.setTimeout(() => {
-          try {
-            frame.contentWindow?.focus()
-            frame.contentWindow?.print()
-          } catch {
-            window.open(pdfUrl, '_blank', 'noopener')
-          }
-          window.setTimeout(() => frame.remove(), 60_000)
-        }, 250)
-      }
-      document.body.appendChild(frame)
-      return
-    }
-    if (!imageUrl) return
-    const preview = window.open('', '_blank')
-    if (!preview) return
-    preview.document.write(`<!doctype html><html><head><title>${fileName}</title>
-      <style>@page{size:A4 ${orientation === 'LANDSCAPE' ? 'landscape' : 'portrait'};margin:0}
-      html,body{margin:0;padding:0;background:#fff}
-      img{display:block;width:100%;height:auto}</style></head>
-      <body><img src="${imageUrl}" alt="" onload="window.focus();window.print()"></body></html>`)
-    preview.document.close()
   }
 
   return <div className={`a4-preview ${className ?? ''}`} role="group"
@@ -246,10 +198,6 @@ export default function DocumentPreview({
       </div>
 
       <div className="a4-group a4-actions">
-        <button type="button" className="a4-btn" onClick={print} disabled={!canPrint}
-          aria-label="Print document" title="Print"><Printer size={16} /></button>
-        <button type="button" className="a4-btn" onClick={download} disabled={!canPrint}
-          aria-label="Download document" title="Download"><Download size={16} /></button>
         {sourceUrl && <a className="a4-btn" href={sourceUrl} target="_blank" rel="noreferrer"
           aria-label="Open document in a new tab" title="Open in new tab"><ExternalLink size={16} /></a>}
       </div>
@@ -291,6 +239,9 @@ export default function DocumentPreview({
     </p>
   </div>
 }
+
+/* The preview owns page images and a PDF fetch; skip re-renders caused by unrelated form state. */
+export default memo(DocumentPreview)
 
 export function DocumentPreviewDialog({
   title, subtitle, onClose, children,

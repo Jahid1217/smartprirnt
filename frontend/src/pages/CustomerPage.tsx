@@ -160,7 +160,8 @@ function PrintForm({ shop }: { shop: PublicShop }) {
   }, [shop.qrToken, currentFile, settings])
 
   function update<K extends keyof PrintSettingsInput>(key: K, value: PrintSettingsInput[K]) {
-    setSettings(current => ({ ...current, [key]: value }))
+    // Re-selecting the active option must not re-key the quote request (and refetch it).
+    setSettings(current => (current[key] === value ? current : { ...current, [key]: value }))
     setPage(0)
   }
 
@@ -298,7 +299,7 @@ function PrintForm({ shop }: { shop: PublicShop }) {
 
           <label className="field option-block">
             <span className="field-label">Copies</span>
-            <input type="number" required min={1} max={100} value={settings.copies}
+            <input type="number" required min={1} max={100} inputMode="numeric" value={settings.copies}
               onChange={event => update('copies', event.target.valueAsNumber || 1)} />
           </label>
 
@@ -313,7 +314,7 @@ function PrintForm({ shop }: { shop: PublicShop }) {
         {quoteError && <p role="alert" className="alert error">{quoteError}</p>}
       </fieldset>
 
-      <section className="panel">
+      <section className="panel" aria-busy={files.length > 0 && !quote}>
         <div className="panel-head">
           <div>
             <h2 className="panel-title"><span className="step-dot">3</span>Print preview</h2>
