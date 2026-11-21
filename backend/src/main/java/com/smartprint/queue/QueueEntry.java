@@ -95,6 +95,12 @@ public class QueueEntry {
         this.completedAt = Instant.now();
     }
 
+    @Column(name = "selected_printer_id")
+    private Long selectedPrinterId;
+
+    public Long getSelectedPrinterId() { return selectedPrinterId; }
+    public void selectPrinter(Long printerId) { selectedPrinterId = printerId; }
+
     public Long getId() { return id; }
     public Long getShopId() { return shopId; }
     public Long getOrderId() { return orderId; }

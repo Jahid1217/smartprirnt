@@ -73,6 +73,17 @@ class WindowsQueueTest(unittest.TestCase):
         self.assertEqual(second["status"], "ERROR")
         self.assertEqual(spooler.destinations[second["uri"]], "Office Printer #2")
 
+    def test_spooler_status_requires_matching_job_identity(self):
+        spooler = WindowsSpooler.__new__(WindowsSpooler)
+        spooler.api = MagicMock()
+        spooler.api.JOB_STATUS_PRINTED = 0x80
+        spooler.error = OSError
+        for flags, status in [(0x08, "QUEUED"), (0x10, "PRINTING"), (1, "PAUSED"),
+                              (0x80, "COMPLETED"), (0x100, "CANCELLED")]:
+            spooler.api.GetJob.return_value = {"pDocument": "SmartPrint-test", "Status": flags}
+            self.assertEqual(spooler.job_status("Desk", 1, "SmartPrint-test"), status)
+        self.assertEqual(spooler.job_status("Desk", 1, "SmartPrint-other"), "UNKNOWN")
+
     @staticmethod
     def raise_spooler_error(error):
         raise error()

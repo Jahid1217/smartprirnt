@@ -8,11 +8,11 @@ import {
 } from 'lucide-react'
 import {
   approvePayment, cancelQueueEntry, downloadProtectedAsset, errorMessage,
-  fetchAdminDashboard, fetchAdminOrders, fetchAdminShop, fetchPrintAttempts,
+  fetchAdminDashboard, fetchAdminOrders, fetchAdminShop, fetchPrintAttempts, fetchPrinters,
   fetchMe, fetchSalesReport, fetchSettings, getAccessToken, moveQueueEntry, publicQrUrl, regenerateQr,
-  rejectPayment, retryQueueEntry, saveSettings, setAccessToken, setQueuePaused,
+  rejectPayment, retryQueueEntry, selectQueuePrinter, saveSettings, setAccessToken, setQueuePaused,
   toApiError, type AdminDashboard, type AdminOrder, type AdminShop, type SalesReport,
-  type Settings, type PrintAttempt,
+  type Settings, type PrintAttempt, type Printer as ShopPrinter,
 } from '../lib/api'
 import { dateTime, daysAgoIso, money, prettyStatus, statusTone, todayIso } from '../lib/format'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -73,6 +73,7 @@ function AdminWorkspace() {
   const [params, setParams] = useSearchParams()
   const section = sections.find(item => item.id === params.get('view'))?.id ?? 'Overview'
   const [dashboard, setDashboard] = useState<AdminDashboard>()
+  const [printers, setPrinters] = useState<ShopPrinter[]>([])
   const [orders, setOrders] = useState<AdminOrder[]>([])
   const [shop, setShop] = useState<AdminShop>()
   const [settings, setSettings] = useState<Settings>()
@@ -127,6 +128,10 @@ function AdminWorkspace() {
         if (section === 'Overview' || section === 'Queue') {
           const snapshot = await fetchAdminDashboard()
           if (active) setDashboard(snapshot)
+        }
+        if (section === 'Queue') {
+          const snapshot = await fetchPrinters()
+          if (active) setPrinters(snapshot)
         }
         if (section === 'Requests') {
           const snapshot = await fetchAdminOrders(filter, page)
@@ -457,6 +462,19 @@ function AdminWorkspace() {
                     ? 'Waiting for printer' : prettyStatus(item.state)}
                 </span>
                 {item.state === 'QUEUED' && <div className="queue-actions">
+                  <label className="field">
+                    <span className="sr-only">Printer for {item.orderNumber}</span>
+                    <select value={item.selectedPrinterId ?? ''} disabled={busy}
+                      onChange={event => {
+                        const id = event.currentTarget.value
+                        void action(() => selectQueuePrinter(item.entryId, id ? Number(id) : null), 'Printer selection saved.')
+                      }}>
+                      <option value="">Use shop routing</option>
+                      {printers.filter(printer => (printer.enabled && !printer.virtualPrinter && printer.agentId != null)
+                        || printer.id === item.selectedPrinterId).map(printer =>
+                        <option key={printer.id} value={printer.id}>{printer.name} (#{printer.id})</option>)}
+                    </select>
+                  </label>
                   <button type="button" className="btn tiny" disabled={busy || !index || items[index - 1].state !== 'QUEUED'}
                     onClick={() => void action(() => moveQueueEntry(item.entryId, -1))}>Move up</button>
                   <button type="button" className="btn tiny" disabled={busy || items[index + 1]?.state !== 'QUEUED'}
@@ -706,6 +724,33 @@ function AttemptHistory({ orderNumber }: { orderNumber: string }) {
     }
   }
 
+  const historyOpen = attempts != null
+  useEffect(() => {
+    if (!historyOpen) return
+    let active = true
+    let timer: number
+    async function poll() {
+      try {
+        if (!document.hidden) {
+          const result = await fetchPrintAttempts(orderNumber)
+          if (active) {
+            setAttempts(result)
+            setError('')
+          }
+        }
+      } catch (cause) {
+        if (active) setError(errorMessage(cause))
+      } finally {
+        if (active) timer = window.setTimeout(poll, 5000)
+      }
+    }
+    timer = window.setTimeout(poll, 5000)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [historyOpen, orderNumber])
+
   return <section className="attempt-history">
     <div className="inline">
       <h3 className="subheading">Print history</h3>
@@ -720,7 +765,10 @@ function AttemptHistory({ orderNumber }: { orderNumber: string }) {
         <b>{attempt.fileName}</b>
         <small>Attempt {attempt.attemptNumber} · {attempt.printerName ?? 'Unknown printer'}</small>
       </div>
-      <span className={`badge ${statusTone(attempt.status)}`}>{prettyStatus(attempt.status)}</span>
+      <span className={`badge ${statusTone(attempt.status)}`}>
+        {attempt.spoolerStatus ? `Spooler ${prettyStatus(attempt.spoolerStatus).toLowerCase()}` : prettyStatus(attempt.status)}
+      </span>
+      {attempt.spoolerReference && <small>Spooler job {attempt.spoolerReference}</small>}
       <small className="attempt-time">{dateTime(attempt.startedAt)}</small>
       {attempt.failureReason && <p className="alert error compact">{attempt.failureReason}</p>}
     </div>)}

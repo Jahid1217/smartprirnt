@@ -83,6 +83,24 @@ class AgentTest(unittest.TestCase):
             self.assertEqual([report["code"] for report in second], ["Preferred"])
             self.assertNotIn("ipp://localhost/printers/First", self.agent.printers)
 
+    def test_discovery_reports_removal_and_reconnection(self):
+        attributes = {"printer-state": 3, "printer-is-accepting-jobs": True, "device-uri": "usb://Desk"}
+        self.agent.cups.getPrinters.side_effect = [{}, {"Desk": attributes}, {}, {"Desk": attributes}]
+        with patch("app.main.cups.Connection", return_value=self.agent.cups):
+            self.assertEqual(self.agent.discover(), [])
+            connected = self.agent.discover()
+            self.assertEqual(connected[0]["portName"], "USB")
+            self.assertEqual(self.agent.discover(), [])
+            self.assertEqual(self.agent.discover(), connected)
+
+    def test_unavailable_printer_is_not_submitted(self):
+        self.agent.availability[self.file["printerUri"]] = "OFFLINE"
+        with patch.object(self.agent, "request") as request:
+            with self.assertRaisesRegex(PrintFailure, "unavailable"):
+                self.agent.handle(self.job)
+        request.assert_not_called()
+        self.agent.cups.printFile.assert_not_called()
+
     def test_cups_error_still_reports_agent_heartbeat(self):
         with patch.object(self.agent, "discover", side_effect=RuntimeError), patch.object(
                 self.agent, "post", return_value=self.acknowledgement(0)) as post:
@@ -108,6 +126,7 @@ class AgentTest(unittest.TestCase):
         response.__enter__.return_value = response
         response.iter_content.side_effect = lambda **_: iter([b"%PDF-test"])
         batch = MagicMock()
+        batch.__enter__.return_value = batch
         batch.json.return_value = [first, second]
         with patch.object(self.agent, "discover", return_value=[]), patch.object(
                 self.agent, "post", side_effect=[self.acknowledgement(0), batch]), patch.object(
@@ -140,6 +159,40 @@ class AgentTest(unittest.TestCase):
             self.agent.cups.printFile.assert_called_once()
             post.assert_any_call("/jobs/12/files/23/complete", headers={"X-Submission-Key": "file-attempt-1"})
             post.assert_called_with("/jobs/12/complete")
+
+    def test_canonical_document_path_uses_the_paired_reverse_proxy_prefix(self):
+        self.agent.base_url = "https://example.test/smartprint/api/v1"
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.iter_content.return_value = iter([b"%PDF-test"])
+        with patch.object(self.agent, "request", return_value=response) as request:
+            self.agent.handle(self.job)
+        request.assert_called_once_with(
+            "GET", "https://example.test/smartprint/api/v1/agent/jobs/12/files/23.pdf", stream=True)
+        self.agent.cups.printFile.assert_called_once()
+
+    def test_invalid_pdf_is_rejected_before_spool_intent(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.iter_content.return_value = iter([b"not a PDF"])
+        with patch.object(self.agent, "request", return_value=response):
+            with self.assertRaisesRegex(PrintFailure, "not a PDF"):
+                self.agent.handle(self.job)
+        self.agent.cups.printFile.assert_not_called()
+        self.assertEqual(self.agent.journal.execute("SELECT count(*) FROM submissions").fetchone()[0], 0)
+
+    def test_unconfirmed_spool_job_times_out_without_resubmission(self):
+        self.agent.report_spooler = True
+        with self.agent.journal:
+            self.agent.journal.execute(
+                "INSERT INTO submissions(submission_key, cups_id, changed_at) VALUES (?, ?, 0)",
+                ("file-attempt-1", 1001),
+            )
+        with patch.object(self.agent, "post") as post:
+            with self.assertRaisesRegex(PrintFailure, "unknown"):
+                self.agent.handle(self.job)
+        self.assertEqual(post.call_args.kwargs["json"], {"reference": "1001", "status": "UNKNOWN"})
+        self.agent.cups.printFile.assert_not_called()
 
     def test_ambiguous_submission_stops_for_review(self):
         with self.agent.journal:

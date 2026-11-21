@@ -32,12 +32,23 @@ class PrintAttemptHistory {
             job.getId(), job.getAttemptCount());
     }
 
+    void spoolerUpdate(PrintJob job, PrinterDtos.SpoolerUpdate update) {
+        jdbc.update("""
+            update print_job_attempts set spooler_reference = ?, spooler_status = ?
+            where print_job_id = ? and attempt_number = ?
+              and (spooler_status is distinct from ? or spooler_reference is distinct from ?)
+            """, update.reference(), update.status(), job.getId(), job.getAttemptCount(),
+            update.status(), update.reference());
+    }
+
     List<Map<String, Object>> forOrder(long shopId, String orderNumber) {
         return jdbc.queryForList("""
             select j.order_file_id as "fileId", f.original_name as "fileName",
                    a.attempt_number as "attemptNumber",
                    p.name as "printerName", a.started_at as "startedAt",
-                   a.finished_at as "finishedAt", a.status, a.failure_reason as "failureReason"
+                   a.finished_at as "finishedAt", a.status, a.failure_reason as "failureReason",
+                   a.agent_id as "deviceId", a.printer_id as "printerId", j.id as "jobId",
+                   a.spooler_status as "spoolerStatus", a.spooler_reference as "spoolerReference"
             from print_job_attempts a join print_jobs j on j.id = a.print_job_id
             join order_files f on f.id = j.order_file_id
             join print_queue_entries q on q.id = j.queue_entry_id

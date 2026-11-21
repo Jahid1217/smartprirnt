@@ -411,6 +411,7 @@ export interface QueueItem {
   totalAmount: number
   currency: string
   fileCount: number
+  selectedPrinterId: number | null
   approvedAt: string
   startedAt: string | null
   completedAt: string | null
@@ -466,6 +467,10 @@ export async function fetchQueue(): Promise<QueueItem[]> {
 export async function setQueuePaused(paused: boolean): Promise<QueueSummary> {
   const { data } = await api.post<QueueSummary>('/admin/queue/pause', { paused })
   return data
+}
+
+export async function selectQueuePrinter(entryId: number, printerId: number | null) {
+  await api.patch('/admin/queue/' + entryId + '/printer', { printerId })
 }
 
 export async function moveQueueEntry(entryId: number, direction: -1 | 1): Promise<void> {
@@ -543,6 +548,18 @@ export async function createAgent(name: string): Promise<{
   return data
 }
 
+export async function issueDevicePairing(name: string) {
+  return (await api.post<{ id: string; code: string; expiresAt: string }>('/admin/agents/pairing', { name })).data
+}
+
+export async function fetchDevicePairing(id: string, signal: AbortSignal) {
+  return (await api.get<{ agentId: number | null; expiresAt: string }>(`/admin/agents/pairing/${id}`, { signal })).data
+}
+
+export async function revokeDevice(id: number) {
+  await api.delete(`/admin/agents/${id}`)
+}
+
 // ------------------------------------------------------------------ reports
 
 export interface SalesReport {
@@ -591,7 +608,7 @@ export async function fetchHealth(): Promise<unknown> {
 export type PrinterRouting = Pick<Settings, 'defaultPrinterId' | 'colorPrinterId' | 'bwPrinterId'>
 
 export async function fetchPrinterDiscovery(signal: AbortSignal) {
-  const { data } = await api.get<{ agents: Agent[]; printers: Printer[]; routing: PrinterRouting; queuedJobs: number }>(
+  const { data } = await api.get<{ agents: Agent[]; printers: Printer[]; routing: PrinterRouting; queuedJobs: number; queuePaused: boolean }>(
     '/admin/printers/discovery', { signal, timeout: 8000 },
   )
   if (!data || !Array.isArray(data.agents) || !Array.isArray(data.printers) || !data.routing) {
@@ -606,6 +623,8 @@ export async function savePrinterRouting(routing: PrinterRouting) {
 
 
 export interface PrintAttempt {
+  spoolerStatus: string | null
+  spoolerReference: string | null
   fileId: number
   fileName: string
   attemptNumber: number

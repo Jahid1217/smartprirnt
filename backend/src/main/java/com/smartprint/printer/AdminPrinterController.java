@@ -23,9 +23,11 @@ public class AdminPrinterController {
     private final PrintDispatchService dispatchService;
 
     private final PrintAttemptHistory history;
+    private final DevicePairingService pairing;
 
-    public AdminPrinterController(PrintDispatchService dispatchService, PrintAttemptHistory history) {
+    public AdminPrinterController(PrintDispatchService dispatchService, PrintAttemptHistory history, DevicePairingService pairing) {
         this.history = history;
+        this.pairing = pairing;
         this.dispatchService = dispatchService;
     }
 
@@ -33,6 +35,15 @@ public class AdminPrinterController {
     public List<java.util.Map<String, Object>> attempts(@AuthenticationPrincipal AdminPrincipal principal,
                                                        @PathVariable String orderNumber) {
         return history.forOrder(principal.shopId(), orderNumber);
+    }
+
+    public record PrinterChoice(Long printerId) {}
+
+    @PatchMapping("/queue/{entryId}/printer")
+    public ResponseEntity<Void> selectPrinter(@AuthenticationPrincipal AdminPrincipal principal,
+                                               @PathVariable Long entryId, @RequestBody PrinterChoice choice) {
+        dispatchService.selectPrinter(principal.shopId(), entryId, choice.printerId());
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/printers/discovery")
@@ -61,6 +72,26 @@ public class AdminPrinterController {
     @GetMapping("/agents")
     public List<PrinterDtos.AgentView> agents(@AuthenticationPrincipal AdminPrincipal principal) {
         return dispatchService.agents(principal.shopId());
+    }
+
+    @PostMapping("/agents/pairing")
+    public ResponseEntity<DevicePairingService.Challenge> issuePairing(
+            @AuthenticationPrincipal AdminPrincipal principal,
+            @Valid @RequestBody PrinterDtos.CreateAgentRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).cacheControl(org.springframework.http.CacheControl.noStore())
+            .body(pairing.issue(principal.shopId(), request.name()));
+    }
+
+    @GetMapping("/agents/pairing/{id}")
+    public DevicePairingService.Status pairingStatus(@AuthenticationPrincipal AdminPrincipal principal,
+                                                      @PathVariable java.util.UUID id) {
+        return pairing.status(principal.shopId(), id);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/agents/{id}")
+    public ResponseEntity<Void> revoke(@AuthenticationPrincipal AdminPrincipal principal, @PathVariable Long id) {
+        dispatchService.revoke(principal.shopId(), id, principal.userId());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/agents")

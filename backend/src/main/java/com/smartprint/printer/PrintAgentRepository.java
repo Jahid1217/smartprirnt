@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface PrintAgentRepository extends JpaRepository<PrintAgent, Long> {
+    boolean existsByIdAndRevokedAtIsNotNull(Long id);
+
     Optional<PrintAgent> findByAgentCode(String agentCode);
 
     List<PrintAgent> findByShopIdOrderByCreatedAtAsc(Long shopId);

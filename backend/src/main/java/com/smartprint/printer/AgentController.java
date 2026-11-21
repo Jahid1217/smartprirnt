@@ -19,8 +19,19 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentController {
     private final PrintDispatchService dispatchService;
 
-    public AgentController(PrintDispatchService dispatchService) {
+    private final DevicePairingService pairing;
+
+    public record PairingRequest(@jakarta.validation.constraints.NotNull
+                                 @jakarta.validation.constraints.Pattern(regexp = "[0-9a-fA-F]{20}") String code) {}
+
+    public AgentController(PrintDispatchService dispatchService, DevicePairingService pairing) {
         this.dispatchService = dispatchService;
+        this.pairing = pairing;
+    }
+
+    @PostMapping("/pairing")
+    public ResponseEntity<PrinterDtos.CreatedAgent> pair(@Valid @RequestBody PairingRequest request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(pairing.redeem(request.code()));
     }
 
     @PostMapping("/heartbeat")
@@ -53,6 +64,15 @@ public class AgentController {
                          @PathVariable Long queueEntryId,
                          @RequestHeader(value = "X-Assignment-Key", required = false) String assignmentKey) {
         dispatchService.complete(agentCode, agentToken, queueEntryId, assignmentKey);
+    }
+
+    @PostMapping("/jobs/{queueEntryId}/files/{fileId}/spooler")
+    public void spooler(@RequestHeader("X-Agent-Code") String agentCode,
+                        @RequestHeader("X-Agent-Token") String agentToken,
+                        @RequestHeader("X-Submission-Key") String key,
+                        @PathVariable Long queueEntryId, @PathVariable Long fileId,
+                        @Valid @RequestBody PrinterDtos.SpoolerUpdate update) {
+        dispatchService.reportSpooler(agentCode, agentToken, queueEntryId, fileId, key, update);
     }
 
     @PostMapping("/jobs/{queueEntryId}/files/{fileId}/complete")

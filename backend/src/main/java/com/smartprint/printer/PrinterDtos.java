@@ -72,7 +72,7 @@ public final class PrinterDtos {
 
     public record Routing(Long defaultPrinterId, Long colorPrinterId, Long bwPrinterId) {}
 
-    public record Discovery(List<AgentView> agents, List<PrinterView> printers, Routing routing, long queuedJobs) {}
+    public record Discovery(List<AgentView> agents, List<PrinterView> printers, Routing routing, long queuedJobs, boolean queuePaused) {}
 
     public record AgentStatus(
         Long agentId,
@@ -106,6 +106,12 @@ public final class PrinterDtos {
         String customerName,
         String assignmentKey,
         List<AgentFile> files
+    ) {}
+
+    public record SpoolerUpdate(
+        @NotBlank @jakarta.validation.constraints.Pattern(regexp = "[0-9]{1,20}") String reference,
+        @NotBlank @jakarta.validation.constraints.Pattern(
+            regexp = "QUEUED|PRINTING|PAUSED|COMPLETED|FAILED|CANCELLED|UNKNOWN") String status
     ) {}
 
     public record JobFailureRequest(@Size(max = 500) String reason) {}

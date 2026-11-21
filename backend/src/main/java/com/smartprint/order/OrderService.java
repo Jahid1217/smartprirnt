@@ -485,7 +485,7 @@ public class OrderService {
                 : "Payment approved — you are #" + (queueEntryRepository.countAhead(
                     queue.getShopId(), queue.priority()) + 1) + " in line, waiting for a compatible printer";
             case PRINTING -> "Printing now";
-            case COMPLETED -> "Print completed — ready for pickup";
+            case COMPLETED -> "Print processing completed";
             case COLLECTED -> "Collected — thank you";
             case PAYMENT_REJECTED -> "Payment rejected"
                 + (payment.getRejectionReason() == null ? "" : " — " + payment.getRejectionReason());

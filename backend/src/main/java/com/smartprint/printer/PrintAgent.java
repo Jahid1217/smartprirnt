@@ -70,6 +70,12 @@ public class PrintAgent {
         this.lastPrinterCount = printerCount;
     }
 
+    @Column(name = "revoked_at")
+    private Instant revokedAt;
+
+    public boolean isRevoked() { return revokedAt != null; }
+    public void revoke() { revokedAt = Instant.now(); offline(); }
+
     public void offline() { this.status = "OFFLINE"; }
 
     public Long getId() { return id; }

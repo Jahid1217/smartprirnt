@@ -213,21 +213,31 @@ class WindowsSpooler:
             finally:
                 win32gui.DeleteDC(context)
 
-    def completed(self, destination, job_id, title):
+    def job_status(self, destination, job_id, title):
         with self.printer(destination) as handle:
             try:
                 job = self.api.GetJob(handle, job_id, 1)
             except self.error as exc:
                 if exc.winerror in (2, 87):
-                    raise RuntimeError("Windows job history is missing. Check printer output before retrying.") from exc
+                    return "UNKNOWN"
                 raise
-        if job["pDocument"] != title or job["Status"] & (0x4 | 0x100):
-            raise RuntimeError("Windows cancelled or lost the print job. Check printer output.")
-        return bool(job["Status"] & self.api.JOB_STATUS_PRINTED)
+        if job["pDocument"] != title:
+            return "UNKNOWN"
+        flags = job["Status"]
+        if flags & self.api.JOB_STATUS_PRINTED:
+            return "COMPLETED"
+        if flags & (0x4 | 0x100):  # deleting or deleted
+            return "CANCELLED"
+        if flags & 0x1:  # paused
+            return "PAUSED"
+        if flags & 0x10:  # printing
+            return "PRINTING"
+        return "QUEUED"
 
     def release(self, destination, job_id):
         try:
             with self.printer(destination) as handle:
                 self.api.SetJob(handle, job_id, 0, None, 9)  # JOB_CONTROL_RELEASE
-        except self.error:
-            pass
+        except self.error as exc:
+            LOG.warning("Could not release retained spooler job %s (Windows error %s)",
+                        job_id, exc.winerror)

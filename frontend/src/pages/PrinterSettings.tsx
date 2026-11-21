@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { Printer } from 'lucide-react'
 import {
-  createAgent, errorMessage, fetchPrinterDiscovery, savePrinterRouting,
+  api, createAgent, errorMessage, fetchDevicePairing, fetchPrinterDiscovery, issueDevicePairing, revokeDevice, savePrinterRouting,
   setPrinterEnabled, toApiError, type PrinterRouting,
 } from '../lib/api'
 
@@ -37,6 +38,11 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
   const [credentials, setCredentials] = useState<Awaited<ReturnType<typeof createAgent>>>()
+  const [deviceName, setDeviceName] = useState('Print station')
+  const [challenge, setChallenge] = useState<Awaited<ReturnType<typeof issueDevicePairing>>>()
+  const [pairedId, setPairedId] = useState<number>()
+  const [expired, setExpired] = useState(false)
+  const [revokeId, setRevokeId] = useState<number>()
   const refreshRef = useRef<() => void>(() => {})
   const unauthorized = useRef(onUnauthorized)
   unauthorized.current = onUnauthorized
@@ -101,6 +107,44 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
     }
   }, [])
 
+  useEffect(() => {
+    if (!challenge) return
+    const controller = new AbortController()
+    let timer = 0
+    let complete = false
+    const current = challenge
+    async function poll() {
+      try {
+        const result = await fetchDevicePairing(current.id, controller.signal)
+        if (controller.signal.aborted) return
+        setActionError(currentError => currentError.startsWith('Could not check pairing status.') ? '' : currentError)
+        if (result.agentId != null) {
+          complete = true
+          setPairedId(result.agentId)
+          refreshRef.current()
+        } else if (Date.parse(result.expiresAt) <= Date.now()) {
+          complete = true
+          setExpired(true)
+        }
+      } catch (cause) {
+        if (controller.signal.aborted) return
+        if (toApiError(cause).status === 401) {
+          complete = true
+          unauthorized.current()
+        } else {
+          setActionError(`Could not check pairing status. ${errorMessage(cause)}`)
+        }
+      } finally {
+        if (!complete && !controller.signal.aborted) timer = window.setTimeout(poll, 3000)
+      }
+    }
+    void poll()
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [challenge])
+
   const printers = snapshot?.printers ?? []
   const active = failure ? [] : snapshot?.agents.filter(agent => agent.status === 'ONLINE') ?? []
   const usable = printers.filter(printer => printer.enabled && printer.status === 'ONLINE')
@@ -144,8 +188,14 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
   const routingChanged = !!snapshot && routes.some(([key]) =>
     draft[key] !== undefined && draft[key] !== snapshot.routing[key],
   )
-  const status = failure ? 'Disconnected' : !snapshot ? 'Detecting Printers' : !agent ? 'Disconnected'
-    : agent.discoveryError ? 'Detecting Printers' : agentPrinters.length ? 'Connected' : 'No Printer Found'
+  const status = failure ? 'Connection status unavailable' : !snapshot ? 'Checking connection' : !agent ? 'Disconnected' : 'Online'
+  const pairDevice = snapshot?.agents.find(device => device.id === pairedId)
+  const apiUrl = new URL(api.defaults.baseURL ?? '/api/v1', window.location.origin)
+  const revokedIds = new Set(snapshot?.agents.filter(device => device.status === 'REVOKED').map(device => device.id))
+  const revokedRoutes = routes.filter(([key]) => {
+    const printer = printers.find(item => item.id === snapshot?.routing[key])
+    return printer?.agentId != null && revokedIds.has(printer.agentId)
+  })
 
   async function action(work: () => Promise<void>, message?: string) {
     setBusy(true)
@@ -185,6 +235,9 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
       {detected && <p>Detected printer <b>{detected.name}</b>{detected.agentDefault ? (windows ? ' · Windows system default' : ' · CUPS default') : ''}</p>}
       {printers.map(printer => <div className="record-card stack" key={printer.id}>
         <b>{printer.name}</b>
+        {snapshot?.agents.find(device => device.id === printer.agentId)?.name && <span>
+          Device {snapshot.agents.find(device => device.id === printer.agentId)?.name}
+        </span>}
         {printer.virtualPrinter && <span>Virtual queue</span>}
         {duplicateQueue(printer) && <span>Shares a printer port with another queue</span>}
         <span>Model {printer.model || 'Unreported by the driver'}</span>
@@ -245,15 +298,66 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
       <p role="status"><b>{status}</b></p>
       {agent && <p><b>{agent.name}</b> · {agent.agentCode === localCode ? 'This device' : 'Active shop agent'}</p>}
       {agent?.discoveryError && <p role="alert" className="alert error">{agent.discoveryError}</p>}
-      {snapshot && !agent && <p>{localCode
-        ? 'The local agent has no active heartbeat for this shop. Check enrollment, the API URL, and the agent log.'
-        : 'Start an enrolled Print Agent under the Windows user who sees the printers, then check its server connection.'}</p>}
+      {snapshot && !failure && !agent && <p>
+        This shop has no active device heartbeat. Pair a device or start the already paired agent.
+        Check the API URL and agent log if the device stays offline.
+      </p>}
+      {!failure && !!snapshot?.queuedJobs && (snapshot.queuePaused || !available.length) && <p role="status">
+        {snapshot.queuedJobs} waiting in the queue. {snapshot.queuePaused
+          ? 'Dispatch is paused. Resume it from the Queue tab.'
+          : 'Dispatch requires an enabled, compatible printer on a connected device.'}
+      </p>}
+      {revokedRoutes.length > 0 && <p role="alert" className="alert error">
+        Saved routes for {revokedRoutes.map(([, label]) => label).join(', ')} point to a revoked device.
+        Select a replacement or restore automatic routing. Check waiting orders for a per-order printer selection.
+      </p>}
       {snapshot && agent && <p>{agent.printerCount} queues reported by the agent.</p>}
-      {status === 'No Printer Found' && !windows && <p>Add or enable a printer in CUPS on the selected agent’s computer.</p>}
+      {agent && !agent.discoveryError && !agentPrinters.length && <p>{windows
+        ? 'No Windows queues were reported. Add a printer and run the agent as the Windows user who sees it.'
+        : 'No CUPS queues were reported. Add a system printer visible to the SmartPrint service account.'}</p>}
       {windows && !detected && !agent?.discoveryError && <p>{windowsDefaultMessage} Automatic routing can use other compatible printers.</p>}
       {snapshot && agent && !available.length && <p>New jobs wait until a compatible printer becomes free.</p>}
+      <form className="stack" onSubmit={event => {
+        event.preventDefault()
+        void action(async () => {
+          const result = await issueDevicePairing(deviceName.trim())
+          setPairedId(undefined)
+          setExpired(false)
+          setChallenge(result)
+        })
+      }}>
+        <h3>Pair a device</h3>
+        {apiUrl.protocol === 'https:' ? <p>Agent API URL <code>{apiUrl.href}</code></p> :
+          <p role="status">This page uses an HTTP API. Use the same SmartPrint backend through a trusted HTTPS endpoint to pair an agent.</p>}
+        <label className="field">
+          Device name
+          <input required maxLength={150} value={deviceName} onChange={event => setDeviceName(event.target.value)} />
+        </label>
+        <button className="btn" disabled={busy || !deviceName.trim()}>Generate pairing code</button>
+        {challenge && pairedId == null && !expired && <>
+          <code className="credentials">{challenge.code}</code>
+          <p>Run the agent with <code>--pair</code> followed by your HTTPS API URL ending in <code>/api/v1</code>.
+            Enter the code when prompted. It expires at {new Date(challenge.expiresAt).toLocaleTimeString()}.</p>
+        </>}
+        {expired && <p role="status">Pairing code expired. Generate a new code to continue.</p>}
+        {pairedId != null && <p role="status">
+          {pairDevice?.status === 'REVOKED' ? 'This device was revoked. Generate a fresh code to pair again.'
+            : pairDevice?.status === 'ONLINE' ? 'Device paired and connected.'
+            : 'Code redeemed. Start or restart the agent and wait for its first successful heartbeat.'}
+        </p>}
+      </form>
+      <h3>Paired devices</h3>
+      {snapshot?.agents.map(device => <div className="record-card stack" key={device.id}>
+        <b>{device.name}</b>
+        <span>{device.status === 'REVOKED' ? 'Revoked' : device.status === 'ONLINE' ? 'Online'
+          : device.lastSeenAt ? 'Offline' : 'Awaiting first heartbeat'}
+          {device.lastSeenAt && (device.platform === 'WINDOWS' ? ' · Windows' : ' · Linux / CUPS')}</span>
+        {device.status === 'REVOKED' && <p>Its credentials are disabled. Generate a new code and pair the station again.</p>}
+        <span>Last connected {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'Never'}</span>
+        {device.status !== 'REVOKED' && <button className="btn" disabled={busy} onClick={() => setRevokeId(device.id)}>Revoke device</button>}
+      </div>)}
       <details className="stack">
-        <summary>Set up a new print station</summary>
+        <summary>Legacy agent enrollment</summary>
         <p>Generate credentials once for each new installation. Reuse those credentials after restarting the agent.</p>
         <button className="btn" disabled={busy || Boolean(credentials)} onClick={() => void action(async () => {
           setCredentials(await createAgent('Print station'))
@@ -262,5 +366,14 @@ export default function PrinterSettings({ onUnauthorized }: { onUnauthorized: ()
       </details>
     </section>
     </div>
+    {revokeId != null && <ConfirmDialog title="Revoke this device?"
+      description="This disconnects the agent. Verify the printer output for any active jobs before retrying."
+      confirmLabel="Revoke device" onCancel={() => setRevokeId(undefined)}
+      onConfirm={() => {
+        if (revokeId == null) return
+        const id = revokeId
+        setRevokeId(undefined)
+        void action(async () => { await revokeDevice(id) })
+      }} />}
   </div>
 }

@@ -1,0 +1,28 @@
+[Unit]
+Description=SmartPrint desktop printer agent
+After=network-online.target cups.service
+Wants=network-online.target
+AssertPathExists=/etc/smartprint-agent/credentials.enc
+
+[Service]
+Type=simple
+User=smartprint-agent
+StateDirectory=smartprint-agent
+StateDirectoryMode=0700
+WorkingDirectory=/usr/lib/smartprint-agent
+Environment=AGENT_STATE_DIR=/var/lib/smartprint-agent
+Environment=SMARTPRINT_AGENT_CONFIG=/etc/smartprint-agent/agent.conf
+LoadCredentialEncrypted=smartprint-agent:/etc/smartprint-agent/credentials.enc
+ExecStart=/usr/bin/python3 -m app.main
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=78
+TimeoutStopSec=180
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

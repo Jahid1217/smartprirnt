@@ -98,11 +98,32 @@ public class PrintDispatchService {
         return new PrinterDtos.CreatedAgent(agent.getAgentCode(), secret, agent.getName());
     }
 
+    @Transactional
+    public void revoke(long shopId, long id, long actorId) {
+        queueService.lockShop(shopId);
+        PrintAgent agent = agentRepository.findById(id)
+            .filter(candidate -> candidate.getShopId().equals(shopId))
+            .orElseThrow(() -> new NotFoundException("Print agent not found"));
+        if (agent.isRevoked()) return;
+        agent.revoke();
+        log.info("Print agent revoked: shop={} agent={} admin={}", shopId, id, actorId);
+        for (Printer printer : printerRepository.findByShopIdOrderByNameAsc(shopId)) {
+            if (agent.getId().equals(printer.getAgentId())) printer.markOffline();
+        }
+        for (QueueEntry entry : queueEntryRepository.findActiveForShop(shopId)) {
+            if (QueueEntry.PRINTING.equals(entry.getStatus())
+                && assignedTo(agent, jobRepository.findByQueueEntryId(entry.getId()))) {
+                failEntry(entry, shopId, "Agent revoked. Submission outcome unknown. Verify printer output before retrying.");
+            }
+        }
+        realtime.shopChanged(shopId);
+    }
+
     @Transactional(readOnly = true)
     public List<PrinterDtos.AgentView> agents(Long shopId) {
         return agentRepository.findByShopIdOrderByCreatedAtAsc(shopId).stream()
             .map(agent -> new PrinterDtos.AgentView(
-                agent.getId(), agent.getAgentCode(), agent.getName(), status(agent.getStatus(), agent.getLastSeenAt()),
+                agent.getId(), agent.getAgentCode(), agent.getName(), agent.isRevoked() ? "REVOKED" : status(agent.getStatus(), agent.getLastSeenAt()),
                 agent.getLastSeenAt(), agent.getLastPrinterCount(), agent.getDiscoveryError(), agent.getPlatform(), agent.getCreatedAt()))
             .toList();
     }
@@ -116,7 +137,32 @@ public class PrintDispatchService {
         log.debug("Printer discovery snapshot for shop {} contains {} agents and {} printers",
             shopId, agents.size(), printers.size());
         return new PrinterDtos.Discovery(agents, printers, routing,
-            queueEntryRepository.countByShopIdAndStatus(shopId, QueueEntry.QUEUED));
+            queueEntryRepository.countByShopIdAndStatus(shopId, QueueEntry.QUEUED), settings.queuePaused());
+    }
+
+    @Transactional
+    public void selectPrinter(long shopId, long entryId, Long printerId) {
+        queueService.lockShop(shopId);
+        QueueEntry entry = requireEntry(shopId, entryId);
+        if (!QueueEntry.QUEUED.equals(entry.getStatus())) {
+            throw new IllegalStateException("Only waiting jobs can change printers");
+        }
+        if (printerId != null) {
+            Printer printer = printerRepository.findByIdAndShopId(printerId, shopId)
+                .orElseThrow(() -> new NotFoundException("Printer not found"));
+            if (!printer.isEnabled() || printer.isVirtualPrinter() || printer.getAgentId() == null
+                || agentRepository.existsByIdAndRevokedAtIsNotNull(printer.getAgentId())) {
+                throw new IllegalArgumentException("Select an enabled printer on a paired device");
+            }
+            for (PrintConfig config : configRepository.findByOrderId(entry.getOrderId())) {
+                if ((config.getColorMode() == PrintColorMode.COLOR && !printer.isColorSupported())
+                    || (config.getSideMode() == PrintSideMode.DUPLEX && !printer.isDuplexSupported())) {
+                    throw new IllegalArgumentException("The printer does not support this order's color or duplex settings");
+                }
+            }
+        }
+        entry.selectPrinter(printerId);
+        realtime.shopChanged(shopId);
     }
 
     @Transactional
@@ -160,6 +206,7 @@ public class PrintDispatchService {
                                              List<PrinterDtos.PrinterReport> reports, String discoveryError, String platform) {
         PrintAgent agent = authenticate(agentCode, agentToken);
         queueService.lockShop(agent.getShopId());
+        requireActive(agent);
         boolean formerlyOnline = "ONLINE".equals(status(agent.getStatus(), agent.getLastSeenAt()));
         int previousPrinterCount = agent.getLastPrinterCount();
         String previousError = agent.getDiscoveryError();
@@ -224,6 +271,7 @@ public class PrintDispatchService {
         PrintAgent agent = authenticate(agentCode, agentToken);
         long shopId = agent.getShopId();
         queueService.lockShop(shopId);
+        requireActive(agent);
         ShopSettings settings = settingsService.settingsFor(shopService.requireById(shopId));
         var printers = printerRepository.findByShopIdOrderByNameAsc(shopId);
         var printerById = printers.stream().collect(Collectors.toMap(Printer::getId, Function.identity()));
@@ -262,9 +310,12 @@ public class PrintDispatchService {
                 }
                 Printer printer = resuming
                     ? printerById.get(job == null ? null : job.getPrinterId())
-                    : PrinterSelection.select(printers, unavailable, agent.getId(), pinned(settings, config.getColorMode()),
+                    : PrinterSelection.select(printers, unavailable, agent.getId(),
+                        firstNonNull(entry.getSelectedPrinterId(), pinned(settings, config.getColorMode())),
                         config.getColorMode() == PrintColorMode.COLOR, config.getSideMode() == PrintSideMode.DUPLEX, cutoff);
                 if (printer == null) {
+                    log.debug("No compatible printer for queue entry {} on agent {} (selected printer={})",
+                        entry.getId(), agent.getId(), firstNonNull(entry.getSelectedPrinterId(), pinned(settings, config.getColorMode())));
                     if (resuming) failEntry(entry, shopId, "The assigned printer is missing. Check printer output before retrying.");
                     blocked = true;
                     break;
@@ -278,6 +329,7 @@ public class PrintDispatchService {
             }
             if (!resuming) {
                 queueService.markPrinting(entry, shopId);
+                log.info("Assigned print queue entry {} to shop {} agent {}", entry.getId(), shopId, agent.getId());
                 for (ResolvedFile item : resolved) {
                     unavailable.add(PrinterSelection.resource(item.printer()));
                     item.printer().markAssigned(Instant.now());
@@ -335,6 +387,7 @@ public class PrintDispatchService {
     public void complete(String agentCode, String agentToken, Long queueEntryId, String key) {
         PrintAgent agent = authenticate(agentCode, agentToken);
         queueService.lockShop(agent.getShopId());
+        requireActive(agent);
         QueueEntry entry = requireEntry(agent.getShopId(), queueEntryId);
         requireAssignment(agent, entry);
         requireAttempt(entry, key);
@@ -352,6 +405,7 @@ public class PrintDispatchService {
                              Long fileId, String key) {
         PrintAgent agent = authenticate(agentCode, agentToken);
         queueService.lockShop(agent.getShopId());
+        requireActive(agent);
         QueueEntry entry = requireEntry(agent.getShopId(), queueEntryId);
         requirePrinting(entry);
         PrintJob job = jobRepository.findByQueueEntryIdAndOrderFileId(entry.getId(), fileId)
@@ -364,6 +418,21 @@ public class PrintDispatchService {
         jobRepository.save(job);
     }
 
+    @Transactional
+    public void reportSpooler(String agentCode, String agentToken, Long queueEntryId,
+                              Long fileId, String key, PrinterDtos.SpoolerUpdate update) {
+        PrintAgent agent = authenticate(agentCode, agentToken);
+        queueService.lockShop(agent.getShopId());
+        requireActive(agent);
+        QueueEntry entry = requireEntry(agent.getShopId(), queueEntryId);
+        requirePrinting(entry);
+        PrintJob job = jobRepository.findByQueueEntryIdAndOrderFileId(entry.getId(), fileId)
+            .filter(candidate -> agent.getId().equals(candidate.getAgentId())
+                && PrintJob.PRINTING.equals(candidate.getStatus()) && submissionKey(candidate).equals(key))
+            .orElseThrow(() -> new NotFoundException("Print file was not assigned to this agent"));
+        history.spoolerUpdate(job, update);
+    }
+
     private String submissionKey(PrintJob job) {
         return job.getIdempotencyKey() + "-" + job.getAttemptCount();
     }
@@ -372,6 +441,7 @@ public class PrintDispatchService {
     public void failed(String agentCode, String agentToken, Long queueEntryId, String reason, String key) {
         PrintAgent agent = authenticate(agentCode, agentToken);
         queueService.lockShop(agent.getShopId());
+        requireActive(agent);
         QueueEntry entry = requireEntry(agent.getShopId(), queueEntryId);
         requireAssignment(agent, entry);
         requireAttempt(entry, key);
@@ -427,10 +497,21 @@ public class PrintDispatchService {
         }
         PrintAgent agent = agentRepository.findByAgentCode(agentCode.trim())
             .orElseThrow(() -> new InvalidCredentialsException("Unknown print agent"));
+        if (agent.isRevoked()) {
+            log.debug("Revoked print agent attempted authentication: shop={} agent={}", agent.getShopId(), agent.getId());
+            throw new InvalidCredentialsException("Print agent revoked");
+        }
         if (!passwordEncoder.matches(agentToken, agent.getCredentialHash())) {
+            log.debug("Invalid print agent credential: shop={} agent={}", agent.getShopId(), agent.getId());
             throw new InvalidCredentialsException("Invalid print agent credentials");
         }
         return agent;
+    }
+
+    private void requireActive(PrintAgent agent) {
+        if (agentRepository.existsByIdAndRevokedAtIsNotNull(agent.getId())) {
+            throw new InvalidCredentialsException("Print agent revoked");
+        }
     }
 
     private QueueEntry requireEntry(Long shopId, Long entryId) {

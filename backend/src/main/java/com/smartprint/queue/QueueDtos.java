@@ -20,7 +20,8 @@ public final class QueueDtos {
         int fileCount,
         Instant approvedAt,
         Instant startedAt,
-        Instant completedAt
+        Instant completedAt,
+        Long selectedPrinterId
     ) {}
 
     public record PauseRequest(boolean paused) {}

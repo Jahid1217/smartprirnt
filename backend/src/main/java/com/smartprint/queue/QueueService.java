@@ -92,7 +92,7 @@ public class QueueService {
                     order == null ? null : order.getTotalAmount(),
                     order == null ? null : order.getCurrency(),
                     (int) orderFileRepository.countByOrderId(entry.getOrderId()),
-                    entry.getApprovedAt(), entry.getStartedAt(), entry.getCompletedAt());
+                    entry.getApprovedAt(), entry.getStartedAt(), entry.getCompletedAt(), entry.getSelectedPrinterId());
             })
             .toList();
     }

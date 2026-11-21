@@ -164,10 +164,13 @@ class OrderFlowIntegrationTest {
         assertThat(rest.getForEntity("/api/v1/admin/dashboard", Map.class).getStatusCode())
             .isEqualTo(HttpStatus.UNAUTHORIZED);
 
-        // Agent is created by the admin and reports a printer.
-        ResponseEntity<Map> agent = rest.exchange("/api/v1/admin/agents", HttpMethod.POST,
+        // Exercise dispatch using credentials issued by desktop pairing.
+        var challenge = rest.postForEntity("/api/v1/admin/agents/pairing",
             new HttpEntity<>(Map.of("name", "Front desk PC"), auth(session.token())), Map.class);
-        assertThat(agent.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(challenge.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        var agent = rest.postForEntity("/api/v1/agent/pairing",
+            Map.of("code", challenge.getBody().get("code")), Map.class);
+        assertThat(agent.getStatusCode()).isEqualTo(HttpStatus.OK);
         String agentCode = (String) agent.getBody().get("agentCode");
         String agentToken = (String) agent.getBody().get("agentToken");
 
@@ -199,7 +202,11 @@ class OrderFlowIntegrationTest {
             new HttpEntity<>(auth(session.token())), Map.class);
         assertThat(discovery.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat((List<?>) discovery.getBody().get("agents")).hasSize(1);
+        Map<?, ?> onlineDevice = (Map<?, ?>) ((List<?>) discovery.getBody().get("agents")).getFirst();
+        assertThat(onlineDevice.get("status")).isEqualTo("ONLINE");
+        assertThat(onlineDevice.get("lastSeenAt")).isNotNull();
         Map<?, ?> detected = (Map<?, ?>) ((List<?>) discovery.getBody().get("printers")).getFirst();
+        assertThat(detected.get("agentId")).isEqualTo(onlineDevice.get("id"));
         assertThat(detected.get("agentDefault")).isEqualTo(true);
         assertThat(detected.get("name")).isEqualTo("Office_Printer #1");
         assertThat(detected.get("model")).isEqualTo("Office Model");
@@ -227,6 +234,19 @@ class OrderFlowIntegrationTest {
         assertThat(queued.getBody()).containsEntry("status", "QUEUED");
         assertThat(((Map<?, ?>) queued.getBody().get("queue")).get("position")).isEqualTo(1);
 
+        RestClient patchClient = RestClient.builder().baseUrl(rest.getRootUri())
+            .requestFactory(new JdkClientHttpRequestFactory()).build();
+        Number waitingEntry = jdbc.queryForObject(
+            "select q.id from print_queue_entries q join orders o on o.id = q.order_id where o.order_number = ?",
+            Long.class, orderNumber);
+        var printerChoice = patchClient.patch().uri("/api/v1/admin/queue/" + waitingEntry + "/printer")
+            .headers(headers -> headers.addAll(auth(session.token())))
+            .body(Map.of("printerId", printerId))
+            .retrieve().toBodilessEntity();
+        assertThat(printerChoice.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(jdbc.queryForObject("select selected_printer_id from print_queue_entries where id = ?",
+            Long.class, waitingEntry)).isEqualTo(printerId);
+
         ResponseEntity<Map> job = rest.exchange("/api/v1/agent/jobs/next", HttpMethod.POST,
             new HttpEntity<>(agentHeaders), Map.class);
         assertThat(job.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -250,6 +270,9 @@ class OrderFlowIntegrationTest {
             new HttpEntity<>(agentHeaders), Map.class).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
 
         agentHeaders.set("X-Submission-Key", (String) jobFile.get("submissionKey"));
+        assertThat(rest.exchange("/api/v1/agent/jobs/" + entryId + "/files/" + jobFile.get("fileId") + "/spooler",
+            HttpMethod.POST, new HttpEntity<>(Map.of("reference", "91", "status", "COMPLETED"), agentHeaders),
+            Void.class).getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(rest.exchange(
             "/api/v1/agent/jobs/" + entryId + "/files/" + jobFile.get("fileId") + "/complete",
             HttpMethod.POST, new HttpEntity<>(agentHeaders), Void.class).getStatusCode())
@@ -264,10 +287,8 @@ class OrderFlowIntegrationTest {
             "/api/v1/public/orders/" + publicToken, Map.class);
         assertThat(finished.getBody()).containsEntry("status", "COMPLETED");
         assertThat(finished.getBody()).containsEntry("statusLabel",
-            "Print completed — ready for pickup");
+            "Print processing completed");
 
-        RestClient patchClient = RestClient.builder().baseUrl(rest.getRootUri())
-            .requestFactory(new JdkClientHttpRequestFactory()).build();
         ResponseEntity<Map> routing = patchClient.patch().uri("/api/v1/admin/printers/routing")
             .headers(headers -> headers.addAll(auth(session.token())))
             .body(Map.of("defaultPrinterId", printerId, "colorPrinterId", printerId, "bwPrinterId", printerId))
@@ -390,6 +411,60 @@ class OrderFlowIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().get("message").toString()).contains("does not exist");
+    }
+
+    @Test
+    void pairingIsSingleUseExpiringAndShopScoped() {
+        ShopSession owner = registerShop("Pairing Shop");
+        ShopSession other = registerShop("Other Pairing Shop");
+        String adminPath = "/api/v1/admin/agents/pairing";
+        String pairPath = "/api/v1/agent/pairing";
+        var issue = new HttpEntity<>(Map.of("name", "USB station"), auth(owner.token()));
+        assertThat(rest.postForEntity(adminPath, issue.getBody(), Map.class).getStatusCode())
+            .isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(rest.postForEntity(pairPath, Map.of("code", "0123456789ABCDEF0000"), Map.class)
+            .getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        var expired = rest.postForEntity(adminPath, issue, Map.class);
+        assertThat(expired.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        jdbc.update("update print_agent_pairings set expires_at = now() - interval '1 minute' where id = ?",
+            UUID.fromString((String) expired.getBody().get("id")));
+        assertThat(rest.postForEntity(pairPath, Map.of("code", expired.getBody().get("code")), Map.class)
+            .getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        var challenge = rest.postForEntity(adminPath, issue, Map.class);
+        String statusPath = adminPath + "/" + challenge.getBody().get("id");
+        var redeem = Map.of("code", challenge.getBody().get("code"));
+        var attempts = List.of(
+            java.util.concurrent.CompletableFuture.supplyAsync(() -> rest.postForEntity(pairPath, redeem, Map.class)),
+            java.util.concurrent.CompletableFuture.supplyAsync(() -> rest.postForEntity(pairPath, redeem, Map.class)));
+        var responses = attempts.stream().map(java.util.concurrent.CompletableFuture::join).toList();
+        assertThat(responses.stream().map(ResponseEntity::getStatusCode).toList())
+            .containsExactlyInAnyOrder(HttpStatus.OK, HttpStatus.UNAUTHORIZED);
+        var credentials = responses.stream().filter(r -> r.getStatusCode().is2xxSuccessful())
+            .findFirst().orElseThrow().getBody();
+        var status = rest.exchange(statusPath, HttpMethod.GET, new HttpEntity<>(auth(owner.token())), Map.class);
+        assertThat(status.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var id = status.getBody().get("agentId");
+        assertThat(id).isNotNull();
+        assertThat(rest.exchange(statusPath, HttpMethod.GET, new HttpEntity<>(auth(other.token())), Map.class)
+            .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        String revokePath = "/api/v1/admin/agents/" + id;
+        assertThat(rest.exchange(revokePath, HttpMethod.DELETE, new HttpEntity<>(auth(other.token())), Void.class)
+            .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        var headers = new HttpHeaders();
+        headers.set("X-Agent-Code", (String) credentials.get("agentCode"));
+        headers.set("X-Agent-Token", (String) credentials.get("agentToken"));
+        var heartbeat = new HttpEntity<>(Map.of("printers", List.of(), "platform", "WINDOWS"), headers);
+        String heartbeatPath = "/api/v1/agent/heartbeat";
+        assertThat(rest.postForEntity(heartbeatPath, heartbeat, Map.class).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(rest.postForEntity(heartbeatPath, heartbeat, Map.class).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(rest.exchange(revokePath, HttpMethod.DELETE, new HttpEntity<>(auth(owner.token())), Void.class)
+            .getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        var revoked = rest.postForEntity(heartbeatPath, heartbeat, Map.class);
+        assertThat(revoked.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(revoked.getBody()).containsEntry("message", "Print agent revoked");
     }
 
     private record ShopSession(String token, String qrToken) {}

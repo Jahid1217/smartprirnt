@@ -28,3 +28,8 @@ __pycache__/
 .vscode/
 *.iml
 .DS_Store
+
+# Desktop agent build output
+print-agent/build/
+print-agent/dist/
+print-agent/*.spec
